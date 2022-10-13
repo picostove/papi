@@ -413,15 +413,17 @@ else
 fi
 AC_MSG_RESULT($debug)
 
+# RIVOS: always use -Wextra
 if test "$CC_COMMON_NAME" = "gcc"; then
-  gcc_version=`gcc -v 2>&1 | tail -n 1 | awk '{printf $3}'`
-  major=`echo $gcc_version | sed 's/\([[^.]][[^.]]*\).*/\1/'`
-  minor=`echo $gcc_version | sed 's/[[^.]][[^.]]*.\([[^.]][[^.]]*\).*/\1/'`
-  if (test "$major" -ge 4 || test "$major" = 3 -a "$minor" -ge 4); then
+#  gcc_version=`gcc -v 2>&1 | tail -n 1 | awk '{printf $3}'`
+#  major=`echo $gcc_version | sed 's/\([[^.]][[^.]]*\).*/\1/'`
+#  minor=`echo $gcc_version | sed 's/[[^.]][[^.]]*.\([[^.]][[^.]]*\).*/\1/'`
+#  if (test "$major" -ge 4 || test "$major" = 3 -a "$minor" -ge 4); then
     CFLAGS+=" -Wextra"
-  else
-    CFLAGS+=" -W"
-  fi
+#  else
+#    CFLAGS+=" -W"
+#  fi
+
 # -Wextra => -Woverride-init on gcc >= 4.2
 # This issues a warning (error under -Werror) for some libpfm4 code. 
 	AC_MSG_CHECKING( for -Wno-override-init)
