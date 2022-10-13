@@ -31,6 +31,12 @@
       papi = prev.papi.overrideAttrs (oldAttrs: {
         inherit version;
         src = self;
+        configureFlags = (oldAttrs.configureFlags or []) ++ [
+          "--with-ffsll"
+          "--with-walltimer=clock_realtime"
+          "--with-tls=__thread"
+          "--with-virtualtimer=clock_thread_cputime_id"
+        ];
       });
     };
 
