@@ -1419,6 +1419,17 @@ static const intel_x86_umask_t intel_icl_machine_clears[]={
 };
 
 static const intel_x86_umask_t intel_icl_uops_retired[]={
+  { .uname = "ALL",
+    .udesc  = "All uops that actually retired",
+    .ucode  = 0x100,
+    .uflags = INTEL_X86_NCOMBO | INTEL_X86_PEBS | INTEL_X86_DFL,
+  },
+  { .uname = "ANY",
+    .udesc  = "All uops that actually retired",
+    .ucode  = 0x100,
+    .uequiv = "ALL",
+    .uflags = INTEL_X86_NCOMBO | INTEL_X86_PEBS,
+  },
   { .uname   = "SLOTS",
     .udesc   = "Retirement slots used.",
     .ucode   = 0x0200ull,
