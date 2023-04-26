@@ -7,7 +7,7 @@
     self,
     nixpkgs,
   }: let
-    version = "6.0.0.1-g${self.rev or "dirty"}";
+    version = "7.0.1-g${self.shortRev or "dirty"}";
     # System types to support.
     supportedSystems = [
       "riscv64-linux"
