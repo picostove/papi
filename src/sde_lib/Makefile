@@ -1,4 +1,5 @@
 CC ?= gcc
+AR ?= ar
 SDE_INC = -I. -I..
 SDE_LD = -ldl -pthread
 CFLAGS = -Wextra -Wall -O2 -g
@@ -18,7 +19,7 @@ dynamic: $(DOBJS)
 	rm -f *_d.o
 
 static: $(SOBJS)
-	ar rs libsde.a $(SOBJS)
+	$(AR) rs libsde.a $(SOBJS)
 	rm -f *_s.o
 
 clean:
