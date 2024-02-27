@@ -20,7 +20,7 @@ int main(int argc, char*argv[])
     int *cards = NULL, *indexmemo = NULL;
     char **allevts = NULL, **basenames = NULL;
     evstock *data = NULL;
-    cat_params_t params = {-1,0,1,0,0,0,NULL,NULL};
+    cat_params_t params = {-1,0,1,0,0,0,NULL,NULL,NULL};
     int nprocs = 1, myid = 0;
 
 #if defined(USE_MPI)
@@ -130,6 +130,9 @@ int main(int argc, char*argv[])
     trav_evts(data, params.subsetsize, cards, nevts, ct, params.mode, allevts, &track, indexmemo, basenames);
 
     char *conf_file_name = ".cat_cfg";
+    if( NULL != params.conf_file ) {
+        conf_file_name = params.conf_file;
+    }
     hw_desc_t *hw_desc = obtain_hardware_description(conf_file_name);
 
     /* Set the default number of threads to the OMP_NUM_THREADS environment
@@ -178,6 +181,7 @@ int main(int argc, char*argv[])
     PAPI_shutdown();
 
 #if defined(USE_MPI)
+    MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
 #endif
 
@@ -312,6 +316,15 @@ static hw_desc_t *obtain_hardware_description(char *conf_file_name){
     // Set at least the L1 cache size to a default value.
     hw_desc->dcache_line_size[0] = 64;
 
+    // Set other default values.
+    for( i=0; i<_MAX_SUPPORTED_CACHE_LEVELS; ++i ) {
+        hw_desc->split[i] = 1;
+        hw_desc->pts_per_reg[i] = 3;
+    }
+    hw_desc->mmsplit = 1;
+    hw_desc->pts_per_mm = 3;
+    hw_desc->maxPPB = 512;
+
     // Obtain hardware values through PAPI_get_hardware_info().
     meminfo = PAPI_get_hardware_info();
     if( NULL != meminfo ) {
@@ -343,7 +356,7 @@ static hw_desc_t *obtain_hardware_description(char *conf_file_name){
 
 
 
-static int parse_line(FILE *input, char **key, int *value){
+static int parse_line(FILE *input, char **key, long long *value){
     int status;
     size_t linelen=0, len;
     char *line=NULL;
@@ -371,7 +384,7 @@ static int parse_line(FILE *input, char **key, int *value){
     strncpy(*key, line, len);
 
     // Scan the line to make sure it has the form "key = value"
-    status = sscanf(pos, "= %d", value);
+    status = sscanf(pos, "= %lld", value);
     if(1 != status){
         fprintf(stderr,"Malformed line in conf file: '%s'\n", line);
         goto handle_error;
@@ -399,11 +412,12 @@ static void read_conf_file(char *conf_file_name, hw_desc_t *hw_desc){
     }
 
     while(1){
-        int value;
+        long long value;
         char *key=NULL;
 
         int ret_val = parse_line(input, &key, &value);
         if( ret_val < 0 ){
+            free(key);
             break;
         }else if( ret_val > 0 ){
             continue;
@@ -451,6 +465,28 @@ static void read_conf_file(char *conf_file_name, hw_desc_t *hw_desc){
             hw_desc->icache_size[2] = value;
         }else if( !strcmp(key, "L4_ICACHE_SIZE") || !strcmp(key, "L4_UCACHE_SIZE") ){
             hw_desc->icache_size[3] = value;
+        }else if( !strcmp(key, "L1_SPLIT") ){
+            hw_desc->split[0] = value;
+        }else if( !strcmp(key, "L2_SPLIT") ){
+            hw_desc->split[1] = value;
+        }else if( !strcmp(key, "L3_SPLIT") ){
+            hw_desc->split[2] = value;
+        }else if( !strcmp(key, "L4_SPLIT") ){
+            hw_desc->split[3] = value;
+        }else if( !strcmp(key, "MM_SPLIT") ){
+            hw_desc->mmsplit = value;
+        }else if( !strcmp(key, "PTS_PER_L1") ){
+            hw_desc->pts_per_reg[0] = value;
+        }else if( !strcmp(key, "PTS_PER_L2") ){
+            hw_desc->pts_per_reg[1] = value;
+        }else if( !strcmp(key, "PTS_PER_L3") ){
+            hw_desc->pts_per_reg[2] = value;
+        }else if( !strcmp(key, "PTS_PER_L4") ){
+            hw_desc->pts_per_reg[3] = value;
+        }else if( !strcmp(key, "PTS_PER_MM") ){
+            hw_desc->pts_per_mm = value;
+        }else if( !strcmp(key, "MAX_PPB") ){
+            hw_desc->maxPPB = value;
         }
 
         free(key);
@@ -836,7 +872,7 @@ void testbench(char** allevts, int cmbtotal, hw_desc_t *hw_desc, cat_params_t pa
     /* Benchmark II - Data Cache Reads*/
     if( params.bench_type & BENCH_DCACHE_READ )
     {
-        if ( !params.quick )
+        if ( !params.quick && 0 == myid )
         {
             if(params.show_progress)
             {
@@ -931,6 +967,21 @@ void testbench(char** allevts, int cmbtotal, hw_desc_t *hw_desc, cat_params_t pa
         if(params.show_progress) print_progress(100);
     }
 
+    /* Benchmark VII - Instructions*/
+    if( params.bench_type & BENCH_INSTR )
+    {
+        if(params.show_progress) printf("Instruction Benchmarks: ");
+
+        for(i = low; i < cap; ++i)
+        {
+            if(params.show_progress) print_progress((100*i)/cmbtotal);
+
+            if( allevts[i] != NULL )
+                instr_driver(allevts[i], hw_desc, params.outputdir);
+        }
+        if(params.show_progress) print_progress(100);
+    }
+
     return;
 }
 
@@ -967,6 +1018,12 @@ int parseArgs(int argc, char **argv, cat_params_t *params){
         }
         if( argc > 1 && !strcmp(argv[0],"-n") ){
             params->max_iter = atoi(argv[1]);
+            --argc;
+            ++argv;
+            continue;
+        }
+        if( argc > 1 && !strcmp(argv[0],"-conf") ){
+            params->conf_file = argv[1];
             --argc;
             ++argv;
             continue;
@@ -1015,6 +1072,10 @@ int parseArgs(int argc, char **argv, cat_params_t *params){
         }
         if( !strcmp(argv[0],"-vec") ){
             params->bench_type |= BENCH_VEC;
+            continue;
+        }
+        if( !strcmp(argv[0],"-instr") ){
+            params->bench_type |= BENCH_INSTR;
             continue;
         }
 
@@ -1094,7 +1155,9 @@ void print_usage(char* name)
     fprintf(stdout, "  Parameters \"-k\" and \"-in\" are mutually exclusive.\n");
     
     fprintf(stdout, "\nOptional:\n");
+    fprintf(stdout, "  -conf    <path>   Configuration file location.\n");
     fprintf(stdout, "  -verbose          Show benchmark progress in the standard output.\n");
+    fprintf(stdout, "  -quick            Skip latency tests.\n");
     fprintf(stdout, "  -n       <value>  Number of iterations for data cache kernels.\n");
     fprintf(stdout, "  -branch           Branch kernels.\n");
     fprintf(stdout, "  -dcr              Data cache reading kernels.\n");
@@ -1102,6 +1165,7 @@ void print_usage(char* name)
     fprintf(stdout, "  -flops            Floating point operations kernels.\n");
     fprintf(stdout, "  -ic               Instruction cache kernels.\n");
     fprintf(stdout, "  -vec              Vector FLOPs kernels.\n");
+    fprintf(stdout, "  -instr            Instructions kernels.\n");
 
     fprintf(stdout, "\n");
     fprintf(stdout, "EXAMPLE: %s -in event_list.txt -out OUTPUT_DIRECTORY -branch -dcw\n", name);

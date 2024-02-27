@@ -41,10 +41,17 @@ based on the PAPI\_ROCM\_ROOT variable. These are not needed by PAPI, but by the
 ROCPROFILER software we interface with.
 
 These added environment variables are typically set as follows, after
-PAPI\_ROCM\_ROOT has been exported. An example is provided below:
+PAPI\_ROCM\_ROOT has been exported. An example is provided below.
+
+For ROCM versions < 5.2.0:
 
     export ROCP_METRICS=$PAPI_ROCM_ROOT/rocprofiler/lib/metrics.xml
     export HSA_TOOLS_LIB=$PAPI_ROCM_ROOT/rocprofiler/lib/librocprofiler64.so
+
+For ROCM versions >= 5.2.0:
+
+    export ROCP_METRICS=${PAPI_ROCM_ROOT}/lib/rocprofiler/metrics.xml
+    export HSA_TOOLS_LIB=${PAPI_ROCM_ROOT}/lib/librocprofiler64.so
 
 The first of these, ROCP\_METRICS, must point at a file containing the
 descriptions of metrics. The second is the location of the rocprofiler library
@@ -78,6 +85,23 @@ setting the ROCP\_TOOL\_LIB to the PAPI library as follows:
 
     The binary image of a `double` is intact; but users must recast to `double` for display purposes.
 
+* Some of the ROCm events are known to cause an error when the rocm component is used in sampling mode
+
+    For example `TA_BUSY_avr`
+
+    ```console
+    $ papi_command_line TA_BUSY_avr
+
+    This utility lets you add events from the command line interface to see if they work.
+
+    Successfully added: rocm:::TA_BUSY_avr:device=0
+
+    Memory access fault by GPU node-4 (Agent handle: 0x46d6d10) on address 0x7ffed888c000. Reason: Unknown.
+    Aborted
+    ```
+
+    The error appears to happen when the ROCr runtime shuts down
+
 ***
 ## FAQ
 
@@ -85,3 +109,29 @@ setting the ROCP\_TOOL\_LIB to the PAPI library as follows:
 
 ## Unusual installations
 For the ROCM component to be operational, it must find the dynamic libraries `libhsa-runtime64.so` and `librocprofiler64.so`. These are normally found in the above standard directories. If these libraries are not found (or are not functional) then the component will be listed as "disabled" with a reason explaining the problem. If libraries were not found, then they are not in the expected places.
+
+2. [Device isolation](#markdown-device-isolation)
+
+## Device isolation
+Compute clusters resource managers can isolate GPU devices, on compute nodes,
+into subgroups. This means that a job might only see part of the devices on the
+node. How many devices are visible depends on the value of a set of environment
+variables, configured by the resource manager (e.g. HIP\_VISIBLE\_DEVICES,
+ROCR\_VISIBLE\_DEVICES, etc).
+
+In order to detect available devices, the ROCm component relies on the HSA ROCm
+runtime functions (i.e. hsa\_iterate\_agents). The ROCR\_VISIBLE\_DEVICES
+environment variable establishes how many devices will be visible to the ROCm
+runtime. Therefore, by extension, the PAPI ROCm component will only see as many
+devices as allocated by the resource manager through the aforementioned
+environment variable. The component assigns them integer identifiers in the
+range [0, N-1], where N is the number of devices for the partition.
+
+Therefore, when using the component in a HIP context, the application would
+need to map the device index given by hipGetDevice to this index range and use
+the index in the event name, e.g., rocm:::GPUBusy:device=X. Preferably the UUID
+of the device should be used for this mapping (see hipDeviceGetUuid and
+HSA\_AMD\_AGENT\_INFO\_UUID).
+
+The AMD isolation mechanism is described in more details here:
+https://rocm.docs.amd.com/en/latest/understand/gpu_isolation.html

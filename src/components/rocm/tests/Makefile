@@ -2,16 +2,17 @@ NAME = rocm
 include ../../Makefile_comp_tests.target
 PAPI_ROCM_ROOT ?= /opt/rocm
 
-CC       = $(PAPI_ROCM_ROOT)/hip/bin/hipcc
-CXX      = $(PAPI_ROCM_ROOT)/hip/bin/hipcc
+HIPCC    = $(shell find $(PAPI_ROCM_ROOT) -iname hipcc | grep bin | head -n 1)
+CC       = $(HIPCC)
+CXX      = $(HIPCC)
 CPPFLAGS+= -I$(PAPI_ROCM_ROOT)/include          \
            -I$(PAPI_ROCM_ROOT)/include/hip      \
            -I$(PAPI_ROCM_ROOT)/include/hsa      \
            -I$(PAPI_ROCM_ROOT)/hip/include/hip  \
            -I$(PAPI_ROCM_ROOT)/hsa/include/hsa  \
            $(INCLUDE)
-LDFLAGS += $(PAPILIB) $(TESTLIB) -fopenmp
-CXXFLAGS = -g -O0 -fopenmp
+LDFLAGS += $(PAPILIB) $(TESTLIB) -pthread
+CXXFLAGS = -g $(OPTFLAGS) -pthread
 
 rocm_tests: ALL
 

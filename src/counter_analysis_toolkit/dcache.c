@@ -5,19 +5,32 @@
 #include "params.h"
 #include <math.h>
 
-#define _SIZE_SAMPLES_ 40
+static void print_header(FILE *ofp_papi, hw_desc_t *hw_desc);
+static void print_cache_sizes(FILE *ofp_papi, hw_desc_t *hw_desc);
+static void print_core_affinities(FILE *ofp);
+
 extern char* eventname;
 
-int min_size, max_size;
+long long min_size, max_size;
+int is_core = 0;
 
 void d_cache_driver(char* papi_event_name, cat_params_t params, hw_desc_t *hw_desc, int latency_only, int mode)
 {
     int pattern = 3;
-    int stride, f, cache_line;
-    int status, test_cnt = 0;
+    long long stride;
+    int f, cache_line;
+    int status, evtCode, test_cnt = 0;
     float ppb = 16;
     FILE *ofp_papi;
     char *sufx, *papiFileName;
+
+    // Use component ID to check if event is a core event.
+    if( strcmp(papi_event_name, "cat::latencies") && PAPI_OK != (status = PAPI_event_name_to_code(papi_event_name, &evtCode)) ) {
+        error_handler(status, __LINE__);
+    } else {
+        if( 0 == PAPI_get_event_component(evtCode) )
+            is_core = 1;
+    }
 
     // Open file (pass handle to d_cache_test()).
     if(CACHE_READ_WRITE == mode){
@@ -46,8 +59,8 @@ void d_cache_driver(char* papi_event_name, cat_params_t params, hw_desc_t *hw_de
     else
         cache_line = hw_desc->dcache_line_size[0];
 
-    // Print the core to which each thread is pinned.
-    print_core_affinities(ofp_papi);
+    // Print meta-data about this run in the first few lines of the output file.
+    print_header(ofp_papi, hw_desc);
 
     // Go through each parameter variant.
     for(pattern = 3; pattern <= 4; ++pattern)
@@ -58,7 +71,7 @@ void d_cache_driver(char* papi_event_name, cat_params_t params, hw_desc_t *hw_de
             // PPB variation only makes sense if the pattern is not sequential.
             if(pattern != 4) 
             {
-                for(ppb = 64; ppb >= 16; ppb -= 48)
+                for(ppb = (float)hw_desc->maxPPB; ppb >= 16; ppb *= 16.0/(hw_desc->maxPPB))
                 {
                     if( params.show_progress )
                     {
@@ -102,9 +115,9 @@ error0:
     return;
 }
 
-int d_cache_test(int pattern, int max_iter, hw_desc_t *hw_desc, int stride_in_bytes, float pages_per_block, char* papi_event_name, int latency_only, int mode, FILE* ofp){
+int d_cache_test(int pattern, int max_iter, hw_desc_t *hw_desc, long long stride_in_bytes, float pages_per_block, char* papi_event_name, int latency_only, int mode, FILE* ofp){
     int i,j,k;
-    int *values;
+    long long *values;
     double ***rslts, *sorted_rslts;
     double ***counter, *sorted_counter;
     int status=0, guessCount, ONT;
@@ -120,7 +133,16 @@ int d_cache_test(int pattern, int max_iter, hw_desc_t *hw_desc, int stride_in_by
             guessCount += 4;
         }
     }else{
-        guessCount = _SIZE_SAMPLES_;
+        int numCaches = hw_desc->cache_levels;
+        for(j=0; j<numCaches; ++j) {
+            guessCount += hw_desc->pts_per_reg[j];
+        }
+        guessCount += hw_desc->pts_per_mm;
+
+        int llc_idx = hw_desc->cache_levels-1;
+        int num_pts = hw_desc->pts_per_mm+1;
+        double factor = pow((double)FACTOR, ((double)(num_pts-1))/((double)num_pts));
+        max_size = factor*(hw_desc->dcache_size[llc_idx])/hw_desc->mmsplit;
     }
 
     // Get the number of threads.
@@ -147,7 +169,7 @@ int d_cache_test(int pattern, int max_iter, hw_desc_t *hw_desc, int stride_in_by
     sorted_counter = (double *)malloc(max_iter*sizeof(double));
 
     // List of buffer sizes which are used in the benchmark.
-    values = (int *)malloc(guessCount*sizeof(int));
+    values = (long long *)malloc(guessCount*sizeof(long long));
 
     // Set the name of the event to be monitored during the benchmark.
     eventname = papi_event_name;
@@ -159,12 +181,12 @@ int d_cache_test(int pattern, int max_iter, hw_desc_t *hw_desc, int stride_in_by
     }
 
     // Sort and print latency and counter results.
-    fprintf(ofp, "# PTRN=%d, STRIDE=%d, PPB=%f, ThreadCount=%d\n", pattern, stride_in_bytes, pages_per_block, ONT);
+    fprintf(ofp, "# PTRN=%d, STRIDE=%lld, PPB=%f, ThreadCount=%d\n", pattern, stride_in_bytes, pages_per_block, ONT);
 
     if(latency_only) {
 
         for(j=0; j<guessCount; ++j){
-            fprintf(ofp, "%d", values[j]);
+            fprintf(ofp, "%lld", values[j]);
             for(k=0; k<ONT; ++k){
                 for(i=0; i<max_iter; ++i){
                     sorted_rslts[i] = rslts[i][j][k];
@@ -178,7 +200,7 @@ int d_cache_test(int pattern, int max_iter, hw_desc_t *hw_desc, int stride_in_by
     } else {
 
         for(j=0; j<guessCount; ++j){
-            fprintf(ofp, "%d", values[j]);
+            fprintf(ofp, "%lld", values[j]);
             for(k=0; k<ONT; ++k){
                 for(i=0; i<max_iter; ++i){
                     sorted_counter[i] = counter[i][j][k];
@@ -209,13 +231,14 @@ cleanup:
 }
 
 
-int varyBufferSizes(int *values, double **rslts, double **counter, hw_desc_t *hw_desc, int stride_in_bytes, float pages_per_block, int pattern, int latency_only, int mode, int ONT){
-    int i, j, k, cnt;
-    long active_buf_len;
+int varyBufferSizes(long long *values, double **rslts, double **counter, hw_desc_t *hw_desc, long long stride_in_bytes, float pages_per_block, int pattern, int latency_only, int mode, int ONT){
+    long long i;
+    int j, k, cnt;
+    long long active_buf_len;
     int allocErr = 0;
     run_output_t out;
 
-    int stride = stride_in_bytes/sizeof(uintptr_t);
+    long long stride = stride_in_bytes/sizeof(uintptr_t);
 
     uintptr_t rslt=42, *v[ONT], *ptr[ONT];
 
@@ -224,7 +247,7 @@ int varyBufferSizes(int *values, double **rslts, double **counter, hw_desc_t *hw
     {
         int idx = omp_get_thread_num();
 
-        ptr[idx] = (uintptr_t *)malloc( (2*max_size+stride)*sizeof(uintptr_t) );
+        ptr[idx] = (uintptr_t *)malloc( (2LL*max_size+stride)*sizeof(uintptr_t) );
         if( !ptr[idx] ){
             fprintf(stderr, "Error: cannot allocate space for experiment.\n");
             #pragma omp critical
@@ -236,7 +259,7 @@ int varyBufferSizes(int *values, double **rslts, double **counter, hw_desc_t *hw
             v[idx] = (uintptr_t *)(stride_in_bytes*(((uintptr_t)ptr[idx]+stride_in_bytes)/stride_in_bytes));
 
             // touch every page at least a few times
-            for(i=0; i<2*max_size; i+=512){
+            for(i=0; i<2LL*max_size; i+=512LL){
                 rslt += v[idx][i];
             }
         }
@@ -247,7 +270,7 @@ int varyBufferSizes(int *values, double **rslts, double **counter, hw_desc_t *hw
     }
 
     // Make a cold run
-    out = probeBufferSize(16*stride, stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
+    out = probeBufferSize(16LL*stride, stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
     if(out.status != 0)
         goto error;
 
@@ -265,52 +288,96 @@ int varyBufferSizes(int *values, double **rslts, double **counter, hw_desc_t *hw
             }
             values[cnt++] = ONT*sizeof(uintptr_t)*active_buf_len;
 
-            out = probeBufferSize((int)((double)active_buf_len*1.25), stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
+            out = probeBufferSize((long long)((double)active_buf_len*1.25), stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
             if(out.status != 0)
                 goto error;
             for(k = 0; k < ONT; ++k) {
                 rslts[cnt][k] = out.dt[k];
                 counter[cnt][k] = out.counter[k];
             }
-            values[cnt++] = ONT*sizeof(uintptr_t)*((int)((double)active_buf_len*1.25));
+            values[cnt++] = ONT*sizeof(uintptr_t)*((long long)((double)active_buf_len*1.25));
 
-            out = probeBufferSize((int)((double)active_buf_len*1.5), stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
+            out = probeBufferSize((long long)((double)active_buf_len*1.5), stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
             if(out.status != 0)
                 goto error;
             for(k = 0; k < ONT; ++k) {
                 rslts[cnt][k] = out.dt[k];
                 counter[cnt][k] = out.counter[k];
             }
-            values[cnt++] = ONT*sizeof(uintptr_t)*((int)((double)active_buf_len*1.5));
+            values[cnt++] = ONT*sizeof(uintptr_t)*((long long)((double)active_buf_len*1.5));
 
-            out = probeBufferSize((int)((double)active_buf_len*1.75), stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
+            out = probeBufferSize((long long)((double)active_buf_len*1.75), stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
             if(out.status != 0)
                 goto error;
             for(k = 0; k < ONT; ++k) {
                 rslts[cnt][k] = out.dt[k];
                 counter[cnt][k] = out.counter[k];
             }
-            values[cnt++] = ONT*sizeof(uintptr_t)*((int)((double)active_buf_len*1.75));
+            values[cnt++] = ONT*sizeof(uintptr_t)*((long long)((double)active_buf_len*1.75));
         }
     }else{
-        int llc;
-        double f, small_size, large_size, curr_size;
+        double f;
+        int numCaches = hw_desc->cache_levels;
+        int numHier   = numCaches+1;
+        int llc_idx   = numCaches-1;
+        int len = 0, ptsToNextCache, tmpIdx = 0;
+        long long currCacheSize, nextCacheSize;
+        long long *bufSizes;
 
-        // If we know the cache sizes, space the measurements between a buffer size equal to L1/8
-        // and a buffer size that all threads cumulatively will exceed the LLC by a factor of 8.
-        // The rationale is that the L1 is typically private, while the LLC is shared among all cores.
-        llc = hw_desc->dcache_size[hw_desc->cache_levels-1];
-        small_size = hw_desc->dcache_size[0]/8;
-        large_size = (double)llc;
-        large_size = 8*large_size/ONT;
-        // Choose a factor "f" to grow the buffer size by, such that we collect "_SIZE_SAMPLES_"
-        // number of samples between "small_size" and "large_size", evenly distributed
-        // in a geometric fashion (i.e., sizes will be equally spaced in a log graph).
-        f = pow(large_size/small_size, 1.0/(_SIZE_SAMPLES_-1));
-        curr_size = small_size;
+        // Calculate the length of the array of buffer sizes.
+        for(j=0; j<numCaches; ++j) {
+            len += hw_desc->pts_per_reg[j];
+        }
+        len += hw_desc->pts_per_mm;
+
+        // Allocate space for the array of buffer sizes.
+        if( NULL == (bufSizes = (long long *)calloc(len, sizeof(long long))) )
+            goto error;
+
+        // Define buffer sizes.
+        tmpIdx = 0;
+        for(j=0; j<numHier; ++j) {
+
+            /* The lower bound of the first cache region is set to the size, L1/8, as a design decision.
+             * All other lower bounds are set to the size of the caches, as observed per core.
+             */
+            if( 0 == j ) {
+                currCacheSize = hw_desc->dcache_size[0]/(8.0*hw_desc->split[0]);
+            } else {
+                currCacheSize = hw_desc->dcache_size[j-1]/hw_desc->split[j-1];
+            }
+
+            /* The upper bound of the final "cache" region (memory in this case) is set to FACTOR times the
+             * size of the LLC so that all threads cumulatively will exceed the LLC by a factor of FACTOR.
+             * All other upper bounds are set to the capacity of the cache, as observed per core.
+             */
+            if( llc_idx+1 == j ) {
+                nextCacheSize = 16LL*(hw_desc->dcache_size[llc_idx])/hw_desc->mmsplit;
+                ptsToNextCache = hw_desc->pts_per_mm+1;
+            } else {
+                nextCacheSize = hw_desc->dcache_size[j]/hw_desc->split[j];
+                ptsToNextCache = hw_desc->pts_per_reg[j]+1;
+            }
+
+            /* Choose a factor "f" to grow the buffer size by, such that we collect the user-specified
+             * number of samples between each cache size, evenly distributed in a geometric fashion
+             * (i.e., sizes will be equally spaced in a log graph).
+             */
+            for(k = 1; k < ptsToNextCache; ++k) {
+                f = pow(((double)nextCacheSize)/currCacheSize, ((double)k)/ptsToNextCache);
+                bufSizes[tmpIdx+k-1] = f*currCacheSize;
+            }
+
+            if( llc_idx+1 == j ) {
+                tmpIdx += hw_desc->pts_per_mm;
+            } else {
+                tmpIdx += hw_desc->pts_per_reg[j];
+            }
+        }
+
         cnt=0;
-        for(j=0; j<_SIZE_SAMPLES_; j++){
-            active_buf_len = (long)(curr_size/sizeof(uintptr_t));
+        for(j=0; j<len; j++){
+            active_buf_len = bufSizes[j]/sizeof(uintptr_t);
             out = probeBufferSize(active_buf_len, stride, pages_per_block, pattern, v, &rslt, latency_only, mode, ONT);
             if(out.status != 0)
                 goto error;
@@ -318,9 +385,10 @@ int varyBufferSizes(int *values, double **rslts, double **counter, hw_desc_t *hw
                 rslts[cnt][k] = out.dt[k];
                 counter[cnt][k] = out.counter[k];
             }
-            values[cnt++] = sizeof(uintptr_t)*active_buf_len;
-            curr_size *= f;
+            values[cnt++] = bufSizes[j];
         }
+
+        free(bufSizes);
     }
 
     // Free each thread's memory.
@@ -349,6 +417,31 @@ int get_thread_count() {
     }
 
     return threadNum;
+}
+
+void print_header(FILE *ofp, hw_desc_t *hw_desc){
+    // Print the core to which each thread is pinned.
+    print_core_affinities(ofp);
+    // Print the size of each cache divided by the number of cores that share it.
+    print_cache_sizes(ofp, hw_desc);
+}
+
+void print_cache_sizes(FILE *ofp, hw_desc_t *hw_desc){
+    int i;
+
+    fprintf(ofp, "#");
+
+    if( NULL == hw_desc ) {
+        fprintf(ofp, "\n");
+        return;
+    }
+
+    for(i=0; i<hw_desc->cache_levels; ++i) {
+        long long sz = hw_desc->dcache_size[i]/hw_desc->split[i];
+        fprintf(ofp, " L%d:%lld", i+1, sz);
+    }
+    fprintf(ofp, "\n");
+
 }
 
 void print_core_affinities(FILE *ofp) {

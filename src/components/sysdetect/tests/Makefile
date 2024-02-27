@@ -13,18 +13,24 @@ ifneq ($(MPICC),)
     endif
 endif
 
-ifneq ($(F77),)
+FTESTS =
+ifeq ($(ENABLE_FORTRAN_TESTS),yes)
     FTESTS = query_device_simple_f
-else
-    FTESTS =
 endif
+
+intel_compilers := ifort ifx
+cray_compilers := ftn crayftn
+
+FFLAGS += -ffree-form
 
 ifeq ($(notdir $(F77)),gfortran)
     FFLAGS +=-ffree-form -ffree-line-length-none
 else ifeq ($(notdir $(F77)),flang)
     FFLAGS +=-ffree-form
-else
+else ifneq ($(findstring $(notdir $(F77)), $(intel_compilers)),)
     FFLAGS +=-free
+else ifneq ($(findstring $(notdir $(F77)), $(cray_compilers)),)
+    FFLAGS +=-ffree
 endif
 
 TESTS = query_device_simple \

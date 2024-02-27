@@ -11,17 +11,16 @@
 // For do_work macro in the header file
 volatile double x,y;
 
-extern int max_size;
+extern int is_core;
 char* eventname = NULL;
 
-run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountPerBlock, int pattern, uintptr_t **v, uintptr_t *rslt, int latency_only, int mode, int ONT){
+run_output_t probeBufferSize(long long active_buf_len, long long line_size, float pageCountPerBlock, int pattern, uintptr_t **v, uintptr_t *rslt, int latency_only, int mode, int ONT){
     int _papi_eventset = PAPI_NULL;
     int retval, buffer = 0, status = 0;
     int error_line = -1, error_type = PAPI_OK;
     register uintptr_t *p = NULL;
     register uintptr_t p_prime;
-    double time1, time2, dt, factor;
-    long count, pageSize, blockSize;
+    long long count, pageSize, blockSize;
     long long int counter[ONT];
     run_output_t out;
     out.status = 0;
@@ -35,12 +34,12 @@ run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountP
         printf("WARNING: x=%lf y=%lf\n",x,y);
 
     // Make no fewer accesses than we would for a buffer of size 128KB.
-    long countMax;
-    unsigned long threshold = 128*1024;
+    long long countMax;
+    long long unsigned threshold = 128*1024;
     if( active_buf_len*sizeof(uintptr_t) > threshold )
-        countMax = 50*((long)active_buf_len)/line_size;
+        countMax = 64LL*((long long)(active_buf_len/line_size));
     else
-        countMax = 50*threshold/line_size;
+        countMax = 64LL*((long long)(threshold/line_size));
 
     // Get the size of a page of memory.
     pageSize = sysconf(_SC_PAGESIZE)/sizeof(uintptr_t);
@@ -51,7 +50,7 @@ run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountP
     }
 
     // Compute the size of a block in the pointer chain and create the pointer chain.
-    blockSize = (long)(pageCountPerBlock*(float)pageSize);
+    blockSize = (long long)(pageCountPerBlock*(float)pageSize);
     #pragma omp parallel reduction(+:status) default(shared)
     {
         int idx = omp_get_thread_num();
@@ -60,10 +59,12 @@ run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountP
     }
 
     // Start of threaded benchmark.
-    #pragma omp parallel private(p,count,dt,factor,time1,time2,retval) reduction(+:buffer) reduction(+:status) firstprivate(_papi_eventset) default(shared)
+    #pragma omp parallel private(p,count,retval) reduction(+:buffer) reduction(+:status) firstprivate(_papi_eventset) default(shared)
     {
         int idx = omp_get_thread_num();
         int thdStatus = 0;
+        double divisor = 1.0;
+        double time1=0, time2=0, dt, factor;
 
         // Initialize the result to a value indicating an error.
         // If no error occurs, it will be overwritten.
@@ -76,7 +77,7 @@ run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountP
         p = &v[idx][0];
         count = countMax;
 
-        if ( !latency_only ) {
+        if ( !latency_only && (is_core || 0 == idx) ) {
             retval = PAPI_create_eventset( &_papi_eventset );
             if (retval != PAPI_OK ){
                 error_type = retval;
@@ -127,7 +128,7 @@ run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountP
             }
         }
 
-        if ( !latency_only ) {
+        if ( !latency_only && (is_core || 0 == idx) ) {
             // Stop the counters.
             retval = PAPI_stop(_papi_eventset, &counter[idx]);
             if ( PAPI_OK != retval ) {
@@ -138,7 +139,12 @@ run_output_t probeBufferSize(int active_buf_len, int line_size, float pageCountP
             }
 
             // Get the average event count per access in pointer chase.
-            out.counter[idx] = (1.0*counter[idx])/(1.0*countMax);
+            // If it is not a core event, get average count per thread.
+            divisor = 1.0*countMax;
+            if( !is_core && 0 == idx )
+                divisor *= ONT;
+
+            out.counter[idx] = (1.0*counter[idx])/divisor;
 
 clean_up:
             retval = PAPI_cleanup_eventset(_papi_eventset);
