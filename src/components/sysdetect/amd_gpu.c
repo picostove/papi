@@ -236,22 +236,10 @@ hsa_is_enabled( void )
 int
 load_hsa_sym( char *status )
 {
-    char pathname[PAPI_MAX_STR_LEN] = { 0 };
+    char pathname[PATH_MAX] = "libhsa-runtime64.so";
     char *rocm_root = getenv("PAPI_ROCM_ROOT");
-    if (rocm_root == NULL) {
-        const char *message =
-            "Can't load libhsa-runtime64.so, PAPI_ROCM_ROOT not set.";
-        int count = snprintf(status, strlen(message) + 1, "%s", message);
-        if (count >= PAPI_MAX_STR_LEN) {
-            SUBDBG("Status string truncated.");
-        }
-        return -1;
-    }
-
-    int expect = snprintf(pathname, PAPI_MAX_STR_LEN,
-                          "%s/lib/libhsa-runtime64.so", rocm_root);
-    if (expect > PAPI_MAX_STR_LEN) {
-        SUBDBG("HSA pathname truncated.");
+    if (rocm_root != NULL) {
+        sprintf(pathname, "%s/lib/libhsa-runtime64.so", rocm_root);
     }
 
     rocm_dlp = dlopen(pathname, RTLD_NOW | RTLD_GLOBAL);
@@ -260,7 +248,6 @@ load_hsa_sym( char *status )
         if (count >= PAPI_MAX_STR_LEN) {
             SUBDBG("Status string truncated.");
         }
-        status[PAPI_MAX_STR_LEN - 1] = 0;
         return -1;
     }
 
@@ -275,7 +262,7 @@ load_hsa_sym( char *status )
     if (!hsa_is_enabled() || (*hsa_initPtr)()) {
         const char *message = "dlsym() of HSA symbols failed or hsa_init() "
                               "failed";
-        int count = snprintf(status, strlen(message) + 1, "%s", message);
+        int count = snprintf(status, PAPI_MAX_STR_LEN, "%s", message);
         if (count >= PAPI_MAX_STR_LEN) {
             SUBDBG("Status string truncated.");
         }
@@ -330,22 +317,10 @@ rsmi_is_enabled( void )
 int
 load_rsmi_sym( char *status )
 {
-    char pathname[PAPI_MAX_STR_LEN] = { 0 };
-    char *rocm_root = getenv("PAPI_ROCM_ROOT");
-    if (rocm_root == NULL) {
-        const char *message =
-            "Can't load librocm_smi64.so, PAPI_ROCM_ROOT not set.";
-        int count = snprintf(status, strlen(message) + 1, "%s", message);
-        if (count >= PAPI_MAX_STR_LEN) {
-            SUBDBG("Status string truncated.");
-        }
-        return -1;
-    }
-
-    int expect = snprintf(pathname, PAPI_MAX_STR_LEN,
-                          "%s/rocm_smi/lib/librocm_smi64.so", rocm_root);
-    if (expect > PAPI_MAX_STR_LEN) {
-        SUBDBG("ROCM-SMI pathname truncated.");
+    char pathname[PATH_MAX] = "librocm_smi64.so";
+    char *rsmi_root = getenv("PAPI_ROCM_ROOT");
+    if (rsmi_root != NULL) {
+        sprintf(pathname, "%s/lib/librocm_smi64.so", rsmi_root);
     }
 
     rsmi_dlp = dlopen(pathname, RTLD_NOW | RTLD_GLOBAL);
@@ -354,7 +329,6 @@ load_rsmi_sym( char *status )
         if (count >= PAPI_MAX_STR_LEN) {
             SUBDBG("Status string truncated.");
         }
-        status[PAPI_MAX_STR_LEN - 1] = 0;
         return -1;
     }
 
@@ -365,7 +339,7 @@ load_rsmi_sym( char *status )
     if (!rsmi_is_enabled() || (*rsmi_initPtr)(0)) {
         const char *message = "dlsym() of RSMI symbols failed or rsmi_init() "
                               "failed";
-        int count = snprintf(status, strlen(message) + 1, "%s", message);
+        int count = snprintf(status, PAPI_MAX_STR_LEN, "%s", message);
         if (count >= PAPI_MAX_STR_LEN) {
             SUBDBG("Status string truncated.");
         }
@@ -426,7 +400,7 @@ open_amd_gpu_dev_type( _sysdetect_dev_type_info_t *dev_type_info )
     }
 #else
     const char *message = "RSMI not configured, no device affinity available";
-    int count = snprintf(dev_type_info->status, strlen(message) + 1, "%s", message);
+    int count = snprintf(dev_type_info->status, PAPI_MAX_STR_LEN, "%s", message);
     if (count >= PAPI_MAX_STR_LEN) {
         SUBDBG("Error message truncated.");
     }
@@ -436,7 +410,7 @@ open_amd_gpu_dev_type( _sysdetect_dev_type_info_t *dev_type_info )
     dev_type_info->dev_info_arr = (_sysdetect_dev_info_u *)arr;
 #else
     const char *message = "ROCm not configured, no ROCm device available";
-    int count = snprintf(dev_type_info->status, strlen(message) + 1, "%s", message);
+    int count = snprintf(dev_type_info->status, PAPI_MAX_STR_LEN, "%s", message);
     if (count >= PAPI_MAX_STR_LEN) {
         SUBDBG("Error message truncated.");
     }

@@ -1,13 +1,13 @@
 {
   description = "papi";
 
-  inputs.nixpkgs.url = "nixpkgs/nixos-22.05";
+  inputs.nixpkgs.url = "nixpkgs/nixos-23.11";
 
   outputs = {
     self,
     nixpkgs,
   }: let
-    version = "7.0.1-g${self.shortRev or "dirty"}";
+    version = "7.1.0-g${self.shortRev or "dirty"}";
     # System types to support.
     supportedSystems = [
       "riscv64-linux"

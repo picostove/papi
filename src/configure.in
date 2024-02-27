@@ -6,7 +6,7 @@
 # cross compiling should work differently...
 
 AC_PREREQ(2.59)
-AC_INIT(PAPI, 7.0.1.0, ptools-perfapi@icl.utk.edu)
+AC_INIT(PAPI, 7.1.0.0, ptools-perfapi@icl.utk.edu)
 AC_CONFIG_SRCDIR([papi.c])
 AC_CONFIG_HEADER([config.h])
 
@@ -69,6 +69,8 @@ AC_ARG_WITH(OSVER,
             fi ])
 AC_MSG_RESULT($OSVER)
 
+CFLAGS="$CFLAGS"
+
 AC_MSG_CHECKING(for perf_event workaround level)
 AC_ARG_WITH(assumed_kernel,
             [AS_HELP_STRING([--with-assumed-kernel=<ver>],
@@ -110,8 +112,6 @@ AC_ARG_WITH(nec,
 AC_MSG_RESULT($NEC)
 AC_SUBST(NEC)
 
-
-CFLAGS="$CFLAGS -g"
 #If not set, set FFLAGS to null to prevent AC_PROG_F77 from defaulting it to -g -O2
 if test "x$FFLAGS" = "x"; then
   FFLAGS=""
@@ -413,31 +413,36 @@ else
 fi
 AC_MSG_RESULT($debug)
 
-# RIVOS: always use -Wextra
+AC_ARG_ENABLE([warnings],
+              [AS_HELP_STRING([--enable-warnings],
+                              [Enable build with -Wall -Wextra (default: disabled)])],
+              [],
+              [enable_warnings=no])
+
 if test "$CC_COMMON_NAME" = "gcc"; then
-#  gcc_version=`gcc -v 2>&1 | tail -n 1 | awk '{printf $3}'`
-#  major=`echo $gcc_version | sed 's/\([[^.]][[^.]]*\).*/\1/'`
-#  minor=`echo $gcc_version | sed 's/[[^.]][[^.]]*.\([[^.]][[^.]]*\).*/\1/'`
-#  if (test "$major" -ge 4 || test "$major" = 3 -a "$minor" -ge 4); then
-    CFLAGS+=" -Wextra"
-#  else
-#    CFLAGS+=" -W"
-#  fi
-
-# -Wextra => -Woverride-init on gcc >= 4.2
-# This issues a warning (error under -Werror) for some libpfm4 code. 
-	AC_MSG_CHECKING( for -Wno-override-init)
-		oldcflags="$CFLAGS"
-		CFLAGS+=" -Wall -Wextra -Werror -Wno-override-init"
-		AC_COMPILE_IFELSE([AC_LANG_SOURCE( 
-						[ struct A { int x; int y; };
-						int main(void) { struct A a = {.x = 0, .y = 0, .y = 5 }; return a.x; }
-						])], 
-						[HAVE_NO_OVERRIDE_INIT=1],
-						[HAVE_NO_OVERRIDE_INIT=0] )
-		CFLAGS="$oldcflags"
-AC_MSG_RESULT($HAVE_NO_OVERRIDE_INIT)
-
+  if test "$enable_warnings" = "yes"; then
+    gcc_version=`gcc -v 2>&1 | tail -n 1 | awk '{printf $3}'`
+    major=`echo $gcc_version | sed 's/\([[^.]][[^.]]*\).*/\1/'`
+    minor=`echo $gcc_version | sed 's/[[^.]][[^.]]*.\([[^.]][[^.]]*\).*/\1/'`
+    if (test "$major" -ge 4 || test "$major" = 3 -a "$minor" -ge 4); then
+      CFLAGS+=" -Wall -Wextra"
+    else
+      CFLAGS+=" -W"
+    fi
+    # -Wextra => -Woverride-init on gcc >= 4.2
+    # This issues a warning (error under -Werror) for some libpfm4 code.
+  fi
+  oldcflags="$CFLAGS"
+  AC_MSG_CHECKING(for -Wno-override-init)
+  CFLAGS+=" -Wall -Werror -Wno-override-init"
+  AC_COMPILE_IFELSE([AC_LANG_SOURCE(
+                                    [ struct A { int x; int y; };
+                                      int main(void) { struct A a = {.x = 0, .y = 0, .y = 5 }; return a.x; }
+                                    ])],
+                    [HAVE_NO_OVERRIDE_INIT=1],
+                    [HAVE_NO_OVERRIDE_INIT=0])
+  CFLAGS="$oldcflags"
+  AC_MSG_RESULT($HAVE_NO_OVERRIDE_INIT)
 fi
 AC_MSG_CHECKING(for CPU type)
 AC_ARG_WITH(CPU,
@@ -709,13 +714,14 @@ AC_ARG_WITH(tls,
                            #include <unistd.h>
                            extern __thread int i;
                            static int res1, res2;
-                           void thread_main (void *arg) {
+                           void *thread_main (void *arg) {
                              i = (int)arg;
                              sleep (1);
                              if ((int)arg == 1)
 		                       res1 = (i == (int)arg);
                              else
 		                       res2 = (i == (int)arg);
+		             return NULL;
                            }
 	                       __thread int i;
                            int main () {
@@ -807,7 +813,7 @@ AC_ARG_WITH(virtualtimer,
                                exit(1);
                              }        
                              done = 1;
-	                         return j;
+			     return (void *) j;
                            } 
   
                            int main( int argc, char ** argv ) {
@@ -851,7 +857,7 @@ AC_ARG_WITH(virtualtimer,
                                        int gettid() {
                                          return syscall( SYS_gettid );
                                        } 
-                                       int doThreadOne( void * v ) {
+                                       void *doThreadOne( void * v ) {
                                          struct tms tm;
                                          int status;
                                          while (!done)
@@ -861,7 +867,7 @@ AC_ARG_WITH(virtualtimer,
                                          threadone = tm.tms_utime;
                                          return 0;
                                        }   
-                                       int doThreadTwo( void * v ) {
+                                       void *doThreadTwo( void * v ) {
                                          struct tms tm;
                                          long i, j = 0xdeadbeef;
                                          int status;
@@ -1560,9 +1566,6 @@ fi
 OPTFLAGS="$OPTFLAGS"
 PAPICFLAGS+=" -D_REENTRANT -D_GNU_SOURCE $NOTLS"
 CFLAGS="$CFLAGS $BITFLAGS"
-if test "$CC_COMMON_NAME" = "gcc"; then
-	CFLAGS="$CFLAGS -Wall"
-fi
 FFLAGS="$CFLAGS $BITFLAGS $FFLAGS -Dlinux"
 
 # OS Support
@@ -2048,17 +2051,9 @@ for comp in $components; do
           CFLAGS="$CFLAGS -DHAVE_ROCM"
       fi
 
-      if test "x`find $PAPI_ROCM_ROOT -name "rocm_smi.h"`" != "x" ; then
+      if test "x`find $PAPI_ROCMSMI_ROOT -name "rocm_smi.h"`" != "x" ; then
           CFLAGS="$CFLAGS -DHAVE_ROCM_SMI"
       fi
-  fi
-  if test "x$comp" = "xrocm"; then
-      case "$PAPI_ROCM_PROF" in
-          ROCPROFILER)
-              CFLAGS="$CFLAGS -DROCM_PROF_ROCPROFILER";;
-          *)
-              CFLAGS="$CFLAGS -DROCM_PROF_ROCPROFILER";;
-      esac
   fi
 done
 
@@ -2162,20 +2157,33 @@ AC_SUBST(BGPM_INSTALL_DIR)
 AC_SUBST(CC_COMMON_NAME)
 AC_SUBST(NVPPC64LEFLAGS)
 
-if test "$cross_compiling" = "yes" ; then
-  AC_MSG_NOTICE(Compiling genpapifdef with $nativecc because cross compiling)
-  $nativecc -I. genpapifdef.c -o genpapifdef
-else
-  AC_MSG_NOTICE(Compiling genpapifdef with $CC)
-  $CC -I. genpapifdef.c -o genpapifdef
+AC_ARG_ENABLE([fortran],
+              [AS_HELP_STRING([--disable-fortran],
+                              [Whether to disable fortran bindings])],
+              [],
+              [enable_fortran=yes])
+
+if test "x$F77" != "x" -a "x$enable_fortran" = "xyes" ; then
+    AC_CONFIG_COMMANDS([genpapifdef],
+                       [
+                           maint/genpapifdef.pl -c > fpapi.h
+                           maint/genpapifdef.pl -f77 > f77papi.h
+                           maint/genpapifdef.pl -f90 > f90papi.h
+                       ],
+                       [])
+
+    FORT_WRAPPERS_SRC="upper_PAPI_FWRAPPERS.c papi_fwrappers_.c papi_fwrappers__.c"
+    FORT_WRAPPERS_OBJ="upper_PAPI_FWRAPPERS.o papi_fwrappers_.o papi_fwrappers__.o"
+    ENABLE_FORTRAN="$enable_fortran"
+    ENABLE_FORTRAN_TESTS="$enable_fortran"
+    FORT_HEADERS="fpapi.h f77papi.h f90papi.h"
 fi
 
-AC_MSG_NOTICE(Generating fpapi.h)
-./genpapifdef -c > fpapi.h
-AC_MSG_NOTICE(Generating f77papi.h)
-./genpapifdef -f77 > f77papi.h
-AC_MSG_NOTICE(Generating f90papi.h)
-./genpapifdef -f90 > f90papi.h
+AC_SUBST([FORT_WRAPPERS_SRC])
+AC_SUBST([FORT_WRAPPERS_OBJ])
+AC_SUBST([FORT_HEADERS])
+AC_SUBST([ENABLE_FORTRAN])
+AC_SUBST([ENABLE_FORTRAN_TESTS])
 
 AC_MSG_NOTICE($FILENAME will be included in the generated Makefile)
 AC_CONFIG_FILES([Makefile papi.pc])
